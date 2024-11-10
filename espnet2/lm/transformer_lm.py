@@ -1,4 +1,4 @@
-from typing import Any, List, Tuple
+from typing import Any, List, Tuple, Optional, Sequence, Union
 
 import torch
 import torch.nn as nn
@@ -7,6 +7,8 @@ from espnet2.lm.abs_model import AbsLM
 from espnet.nets.pytorch_backend.transformer.embedding import PositionalEncoding
 from espnet.nets.pytorch_backend.transformer.encoder import Encoder
 from espnet.nets.pytorch_backend.transformer.mask import subsequent_mask
+
+from espnet2.layers.mask_along_axis import MaskAlongAxis, MaskAlongAxisVariableMaxWidth
 
 
 class TransformerLM(AbsLM):
@@ -19,9 +21,21 @@ class TransformerLM(AbsLM):
         head: int = 2,
         unit: int = 1024,
         layer: int = 4,
-        dropout_rate: float = 0.5,
+        dropout_rate: float = 0.1,
+        positional_dropout_rate: float = 0.1,
+        attention_dropout_rate: float = 0.1,
+        selfattention_layer_type: str = "selfattn",
+        apply_mask: bool = False,
+        mask_width_range: Optional[Union[int, Sequence[int]]] = None,
+        mask_width_ratio_range: Optional[Union[float, Sequence[float]]] = None,
+        num_mask: int = 0,
+        src_only_mask: bool = False,
+        prefix_bidir: bool = False,
+        sp_token_idx: int = -1,
     ):
         super().__init__()
+        if selfattention_layer_type == "t5_selfattn":
+            assert pos_enc is None, "T5 self-attention does uses relative position bias"
         if pos_enc == "sinusoidal":
             pos_enc_class = PositionalEncoding
         elif pos_enc is None:
@@ -31,6 +45,25 @@ class TransformerLM(AbsLM):
 
         else:
             raise ValueError(f"unknown pos-enc option: {pos_enc}")
+
+        if (
+            apply_mask
+            and (mask_width_range is not None)
+            and (mask_width_ratio_range is not None)
+        ):
+            raise ValueError(
+                'Either one of "mask_width_range" or '
+                '"mask_width_ratio_range" can be used'
+            )
+
+        if prefix_bidir and sp_token_idx < 0:
+            raise ValueError(
+                '"sp_token_idx" should be greater than 0 if "prefix_bidir" is true'
+            )
+        if src_only_mask and sp_token_idx < 0:
+            raise ValueError(
+                '"sp_token_idx" should be greater than 0 if "src_only_mask" is true'
+            )
 
         self.embed = nn.Embedding(vocab_size, embed_unit)
         self.encoder = Encoder(
@@ -42,12 +75,53 @@ class TransformerLM(AbsLM):
             dropout_rate=dropout_rate,
             input_layer="linear",
             pos_enc_class=pos_enc_class,
+            positional_dropout_rate=positional_dropout_rate,
+            attention_dropout_rate=attention_dropout_rate,
+            selfattention_layer_type=selfattention_layer_type,
         )
         self.decoder = nn.Linear(att_unit, vocab_size)
+
+        self.src_only_mask = src_only_mask
+        self.prefix_bidir = prefix_bidir
+        self.sp_token_idx = sp_token_idx
+
+        self.selfattention_layer_type = selfattention_layer_type
+
+        if apply_mask:
+            if mask_width_range is not None:
+                self.aug_mask = MaskAlongAxis(
+                    dim="time",
+                    mask_width_range=mask_width_range,
+                    num_mask=num_mask,
+                )
+            elif mask_width_ratio_range is not None:
+                self.aug_mask = MaskAlongAxisVariableMaxWidth(
+                    dim="time",
+                    mask_width_ratio_range=mask_width_ratio_range,
+                    num_mask=num_mask,
+                )
+        else:
+            self.aug_mask = None
 
     def _target_mask(self, ys_in_pad):
         ys_mask = ys_in_pad != 0
         m = subsequent_mask(ys_mask.size(-1), device=ys_mask.device).unsqueeze(0)
+        return ys_mask.unsqueeze(-2) & m
+
+    def _target_mask_prefix_bidir(self, ys_in_pad):
+        ys_mask = ys_in_pad != 0
+        m_causal = subsequent_mask(ys_mask.size(-1), device=ys_mask.device).unsqueeze(0)
+
+        batch, slen = ys_in_pad.shape
+        m_prefix = torch.zeros((batch, slen, slen), dtype=torch.bool, device=ys_mask.device)
+        ks, vs = torch.where(ys_in_pad == self.sp_token_idx)
+        assert len(ks) == batch, "Every sequence is assumed to include a special token."
+
+        # NOTE (Y. Masuyama): this part is not a huge bottle neck
+        for b in range(batch):
+            m_prefix[ks[b], :, :vs[b]] = True
+
+        m = m_causal | m_prefix
         return ys_mask.unsqueeze(-2) & m
 
     def forward(self, input: torch.Tensor, hidden: None) -> Tuple[torch.Tensor, None]:
@@ -59,7 +133,22 @@ class TransformerLM(AbsLM):
 
         """
         x = self.embed(input)
-        mask = self._target_mask(input)
+        if self.aug_mask is not None and self.training:
+            if self.src_only_mask:
+                for batch, token in enumerate(torch.unbind(input)):
+                    _, sp_token = torch.where(token == self.sp_token_idx)
+                    _x = x[batch:batch+1, :sp_token, :]
+                    _x, _ = self.aug_mask(_x, _x)
+                    x[batch, :sp_token, :] = _x[0, :, :]
+            else:
+                # NOTE (ymasuyama): the second x is a dummy length input
+                x, _ = self.aug_mask(x, x)
+
+        if self.prefix_bidir:
+            mask = self._target_mask_prefix_bidir(input)
+        else:
+            mask = self._target_mask(input)
+
         h, _ = self.encoder(x, mask)
         y = self.decoder(h)
         return y, None
@@ -80,10 +169,11 @@ class TransformerLM(AbsLM):
                 and next state for ys
 
         """
+        if self.prefix_bidir:
+            raise ValueError("prefix LM currently supports only batch scoreing")
+
         y = y.unsqueeze(0)
-        h, _, cache = self.encoder.forward_one_step(
-            self.embed(y), self._target_mask(y), cache=state
-        )
+        h, _, cache = self.encoder.forward_one_step(self.embed(y), cache=state)
         h = self.decoder(h[:, -1])
         logp = h.log_softmax(dim=-1).squeeze(0)
         return logp, cache
@@ -117,9 +207,17 @@ class TransformerLM(AbsLM):
                 for i in range(n_layers)
             ]
 
+        # TODO: support KV cache for T5 self-attention
+        if self.selfattention_layer_type == "t5_selfattn":
+            batch_state = None
+
         # batch decoding
         h, _, states = self.encoder.forward_one_step(
-            self.embed(ys), self._target_mask(ys), cache=batch_state
+            self.embed(ys),
+            self._target_mask_prefix_bidir(ys)
+            if self.prefix_bidir
+            else self._target_mask(ys),
+            cache=batch_state
         )
         h = self.decoder(h[:, -1])
         logp = h.log_softmax(dim=-1)

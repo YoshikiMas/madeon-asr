@@ -1,0 +1,69 @@
+num_workers: 8
+use_amp: true
+sharded_ddp: false
+num_att_plot: 0
+
+lm: mamba
+lm_conf:
+    d_model: 384
+    num_blocks: 8
+    ssm_cfg:
+        d_state: 16
+        d_conv: 4
+        expand: 4
+        dt_rank: auto
+        dt_min: 0.001
+        dt_max: 0.1
+        dt_init: random
+        dt_scale: 1.0
+        dt_init_floor: 0.0001
+        conv_bias: true
+        bias: false
+        use_fast_path: true
+        dropout_type: dropout1d
+        projection_dropout_rate: 0.2
+        bidirectional: false
+        bidirectional_mask: true
+    rms_norm: false
+    fused_add_norm: false
+    residual_in_fp32: true
+    init_rescale: true
+    tie_embedding: false
+    apply_mask: true
+    mask_width_range:
+    - 2
+    - 5
+    num_mask: 5
+    prefix_bidir: true
+    prefix_bidir_mode: serial
+    sp_token_idx: 3
+
+model: lm_multitask
+
+model_conf:
+    lsm_weight: 0.1
+    length_normalized_loss: false
+    sos_syms:   # multiple sos symbols are used
+    - "<generatetext>"
+    eos_sym: "<sos/eos>"
+
+# optimization related
+grad_clip: 5.0
+batch_type: length
+batch_bins: 60000
+accum_grad: 4
+max_epoch: 100
+
+optim: adamw
+optim_conf:
+   lr: 0.006
+   weight_decay: 1.0e-06
+scheduler: warmuplr
+scheduler_conf:
+   warmup_steps: 5000
+
+best_model_criterion:
+-   - valid
+    - acc
+    - max
+keep_nbest_models: 10

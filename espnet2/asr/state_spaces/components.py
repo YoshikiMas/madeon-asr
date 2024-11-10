@@ -97,15 +97,12 @@ class DropoutNd(nn.Module):
         """
         if self.training:
             if not self.transposed:
-                X = rearrange(X, "b d ... -> b ... d")
-            # binomial = torch.distributions.binomial.Binomial(
-            #   probs=1-self.p) # This is incredibly slow
+                X = rearrange(X, "b ... d -> b d ...")
             mask_shape = X.shape[:2] + (1,) * (X.ndim - 2) if self.tie else X.shape
-            # mask = self.binomial.sample(mask_shape)
             mask = torch.rand(*mask_shape, device=X.device) < 1.0 - self.p
             X = X * mask * (1.0 / (1 - self.p))
             if not self.transposed:
-                X = rearrange(X, "b ... d -> b d ...")
+                X = rearrange(X, "b d ... -> b ... d")
             return X
         return X
 
@@ -164,43 +161,61 @@ def get_initializer(name, activation=None):
 
     return initializer
 
-
 def LinearActivation(
-    d_input,
-    d_output,
-    bias=True,
-    zero_bias_init=False,
-    transposed=False,
-    initializer=None,
-    activation=None,
-    activate=False,  # Apply activation as part of this module
-    weight_norm=False,
-    **kwargs,
-):
-    """Return a linear module, initialization, and activation."""
+        d_input, d_output, bias=True,
+        transposed=False,
+        activation=None,
+        activate=False, # Apply activation as part of this module
+        **kwargs,
+    ):
+    """Returns a linear nn.Module with control over axes order, initialization, and activation."""
+
     # Construct core module
-    # linear_cls = partial(nn.Conv1d, kernel_size=1) if transposed else nn.Linear
-    linear_cls = TransposedLinear if transposed else nn.Linear
-    if activation == "glu":
-        d_output *= 2
+    linear_cls = partial(nn.Conv1d, kernel_size=1) if transposed else nn.Linear
+    if activation is not None and activation == 'glu': d_output *= 2
     linear = linear_cls(d_input, d_output, bias=bias, **kwargs)
 
-    # Initialize weight
-    if initializer is not None:
-        get_initializer(initializer, activation)(linear.weight)
-
-    # Initialize bias
-    if bias and zero_bias_init:
-        nn.init.zeros_(linear.bias)
-
-    # Weight norm
-    if weight_norm:
-        linear = nn.utils.weight_norm(linear)
-
     if activate and activation is not None:
-        activation = Activation(activation, d_output, dim=1 if transposed else -1)
+        activation = Activation(activation, dim=-2 if transposed else -1)
         linear = nn.Sequential(linear, activation)
     return linear
+
+# def LinearActivation(
+#     d_input,
+#     d_output,
+#     bias=True,
+#     zero_bias_init=False,
+#     transposed=False,
+#     initializer=None,
+#     activation=None,
+#     activate=False,  # Apply activation as part of this module
+#     weight_norm=False,
+#     **kwargs,
+# ):
+#     """Return a linear module, initialization, and activation."""
+#     # Construct core module
+#     # linear_cls = partial(nn.Conv1d, kernel_size=1) if transposed else nn.Linear
+#     linear_cls = TransposedLinear if transposed else nn.Linear
+#     if activation == "glu":
+#         d_output *= 2
+#     linear = linear_cls(d_input, d_output, bias=bias, **kwargs)
+
+#     # Initialize weight
+#     if initializer is not None:
+#         get_initializer(initializer, activation)(linear.weight)
+
+#     # Initialize bias
+#     if bias and zero_bias_init:
+#         nn.init.zeros_(linear.bias)
+
+#     # Weight norm
+#     if weight_norm:
+#         linear = nn.utils.weight_norm(linear)
+
+#     if activate and activation is not None:
+#         activation = Activation(activation, d_output, dim=1 if transposed else -1)
+#         linear = nn.Sequential(linear, activation)
+#     return linear
 
 
 class SquaredReLU(nn.Module):

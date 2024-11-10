@@ -147,6 +147,7 @@ class CommonPreprocessor(AbsPreprocessor):
         unk_symbol: str = "<unk>",
         space_symbol: str = "<space>",
         non_linguistic_symbols: Union[Path, str, Iterable[str]] = None,
+        tokenizer_encode_conf: Optional[Dict] = None,
         delimiter: str = None,
         rir_scp: str = None,
         rir_apply_prob: float = 1.0,
@@ -192,6 +193,7 @@ class CommonPreprocessor(AbsPreprocessor):
                 non_linguistic_symbols=non_linguistic_symbols,
                 g2p_type=g2p_type,
                 nonsplit_symbol=nonsplit_symbol,
+                encode_kwargs=tokenizer_encode_conf,
                 whisper_language=whisper_language,
                 whisper_task=whisper_task,
             )
@@ -2306,4 +2308,111 @@ class S2TPreprocessor(CommonPreprocessor):
 
         data = self._text_process(data, round(init_pad / self.speech_resolution))
 
+        return data
+
+
+class SrcTgtCommonPreprocessor(CommonPreprocessor):
+    def __init__(
+        self,
+        train: bool,
+        use_lang_prompt: bool = False,
+        use_nlp_prompt: bool = False,
+        token_type: str = None,
+        token_list: Union[Path, str, Iterable[str]] = None,
+        bpemodel: Union[Path, str, Iterable[str]] = None,
+        text_cleaner: Collection[str] = None,
+        g2p_type: str = None,
+        unk_symbol: str = "<unk>",
+        space_symbol: str = "<space>",
+        non_linguistic_symbols: Union[Path, str, Iterable[str]] = None,
+        tokenizer_encode_conf: Optional[Dict] = None,
+        delimiter: str = None,
+        rir_scp: str = None,
+        rir_apply_prob: float = 1.0,
+        noise_scp: str = None,
+        noise_apply_prob: float = 1.0,
+        noise_db_range: str = "3_10",
+        short_noise_thres: float = 0.5,
+        aux_task_names: Collection[str] = None,
+        speech_volume_normalize: float = None,
+        speech_name: str = "speech",
+        text_name: str = "text",
+        fs: int = 0,
+        nonsplit_symbol: Iterable[str] = None,
+        data_aug_effects: List = None,
+        data_aug_num: List[int] = [1, 1],
+        data_aug_prob: float = 0.0,
+        # only use for whisper
+        whisper_language: str = None,
+        whisper_task: str = None,
+    ):
+        super().__init__(
+            train=train,
+            token_type=token_type,
+            token_list=token_list,
+            bpemodel=bpemodel,
+            text_cleaner=text_cleaner,
+            g2p_type=g2p_type,
+            unk_symbol=unk_symbol,
+            space_symbol=space_symbol,
+            non_linguistic_symbols=non_linguistic_symbols,
+            delimiter=delimiter,
+            rir_scp=rir_scp,
+            rir_apply_prob=rir_apply_prob,
+            noise_scp=noise_scp,
+            noise_apply_prob=noise_apply_prob,
+            noise_db_range=noise_db_range,
+            short_noise_thres=short_noise_thres,
+            speech_volume_normalize=speech_volume_normalize,
+            speech_name=speech_name,
+            text_name=text_name,
+            tokenizer_encode_conf=None,
+            fs=fs,
+            data_aug_effects=data_aug_effects,
+            data_aug_num=data_aug_num,
+            data_aug_prob=data_aug_prob,
+        )
+        self.src_tokenizer = build_tokenizer(
+            token_type=token_type,
+            bpemodel=bpemodel,
+            delimiter=delimiter,
+            space_symbol=space_symbol,
+            non_linguistic_symbols=non_linguistic_symbols,
+            g2p_type=g2p_type,
+            encode_kwargs=tokenizer_encode_conf[0],
+            whisper_language=whisper_language[0]
+            if "whisper" in token_type[0]
+            else None,
+            whisper_task=whisper_task,
+        )
+        self.tgt_tokenizer = build_tokenizer(
+            token_type=token_type,
+            bpemodel=bpemodel,
+            delimiter=delimiter,
+            space_symbol=space_symbol,
+            non_linguistic_symbols=non_linguistic_symbols,
+            g2p_type=g2p_type,
+            encode_kwargs=tokenizer_encode_conf[1],
+            whisper_language=whisper_language[1]
+            if "whisper" in token_type[1]
+            else None,
+            whisper_task=whisper_task,
+        )
+        self.sp_token="<generatetext>"
+
+    def _text_process(
+        self, data: Dict[str, Union[str, np.ndarray]]
+    ) -> Dict[str, np.ndarray]:
+        text = data[self.text_name]
+        text = self.text_cleaner(text)
+
+        # NOTE (Y. Masuyama): Here we use different tokenizers for BPE dropout
+        src_text, tgt_text = text.split(self.sp_token)
+        src_tokens = self.src_tokenizer.text2tokens(src_text)
+        src_text_ints = self.token_id_converter.tokens2ids(src_tokens)
+        tgt_tokens = self.src_tokenizer.text2tokens(self.sp_token+tgt_text)
+        tgt_text_ints = self.token_id_converter.tokens2ids(tgt_tokens)
+
+        data[self.text_name] = np.array(src_text_ints+tgt_text_ints[1:], dtype=np.int64)
+        assert check_return_type(data)
         return data

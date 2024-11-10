@@ -16,6 +16,7 @@ from espnet2.asr.decoder.transformer_decoder import (
     LightweightConvolutionTransformerDecoder,
     TransformerDecoder,
 )
+from espnet2.asr.decoder.mamba_decoder import MambaDecoder
 from espnet2.asr.discrete_asr_espnet_model import ESPnetDiscreteASRModel
 from espnet2.asr.encoder.abs_encoder import AbsEncoder
 from espnet2.asr.encoder.branchformer_encoder import BranchformerEncoder
@@ -27,6 +28,7 @@ from espnet2.asr.encoder.e_branchformer_encoder import EBranchformerEncoder
 from espnet2.asr.encoder.rnn_encoder import RNNEncoder
 from espnet2.asr.encoder.transformer_encoder import TransformerEncoder
 from espnet2.asr.encoder.vgg_rnn_encoder import VGGRNNEncoder
+from espnet2.asr.encoder.mamba_encoder import MambaEncoder
 from espnet2.asr.frontend.abs_frontend import AbsFrontend
 from espnet2.asr.postencoder.abs_postencoder import AbsPostEncoder
 from espnet2.asr.postencoder.hugging_face_transformers_postencoder import (
@@ -88,6 +90,7 @@ encoder_choices = ClassChoices(
         rnn=RNNEncoder,
         branchformer=BranchformerEncoder,
         e_branchformer=EBranchformerEncoder,
+        mamba=MambaEncoder,
     ),
     type_check=AbsEncoder,
     default="rnn",
@@ -110,6 +113,7 @@ decoder_choices = ClassChoices(
         dynamic_conv=DynamicConvolutionTransformerDecoder,
         dynamic_conv2d=DynamicConvolution2DTransformerDecoder,
         rnn=RNNDecoder,
+        mamba=MambaDecoder,
     ),
     type_check=AbsDecoder,
     default="rnn",

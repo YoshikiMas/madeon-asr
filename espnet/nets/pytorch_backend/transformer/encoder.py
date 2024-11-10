@@ -9,7 +9,7 @@ import torch
 
 from espnet.nets.pytorch_backend.nets_utils import rename_state_dict
 from espnet.nets.pytorch_backend.transducer.vgg2l import VGG2L
-from espnet.nets.pytorch_backend.transformer.attention import MultiHeadedAttention
+from espnet.nets.pytorch_backend.transformer.attention import MultiHeadedAttention, T5MultiHeadedAttention
 from espnet.nets.pytorch_backend.transformer.dynamic_conv import DynamicConvolution
 from espnet.nets.pytorch_backend.transformer.dynamic_conv2d import DynamicConvolution2D
 from espnet.nets.pytorch_backend.transformer.embedding import PositionalEncoding
@@ -176,6 +176,16 @@ class Encoder(torch.nn.Module):
         ]:
             logging.info("encoder self-attention layer type = self-attention")
             encoder_selfattn_layer = MultiHeadedAttention
+            encoder_selfattn_layer_args = [
+                (
+                    attention_heads,
+                    attention_dim,
+                    attention_dropout_rate,
+                )
+            ] * num_blocks
+        elif selfattention_layer_type == "t5_selfattn":
+            logging.info("encoder self-attention layer type = T5 self-attention")
+            encoder_selfattn_layer = T5MultiHeadedAttention
             encoder_selfattn_layer_args = [
                 (
                     attention_heads,

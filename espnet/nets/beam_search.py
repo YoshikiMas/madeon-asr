@@ -479,6 +479,7 @@ class BeamSearch(torch.nn.Module):
         logger.info(f"total log probability: {best.score:.2f}")
         logger.info(f"normalized log probability: {best.score / len(best.yseq):.2f}")
         logger.info(f"total number of ended hypotheses: {len(nbest_hyps)}")
+
         if self.token_list is not None:
             logger.info(
                 "best hypo: "

@@ -144,7 +144,43 @@ class BatchBeamSearch(BeamSearch):
             init_scores[k] = 0.0
 
         # NOTE (Shih-Lun): added for OpenAI Whisper ASR
-        primer = [self.sos] if self.hyp_primer is None else self.hyp_primer
+        if self.hyp_primer is None:
+            primer = [self.sos]
+
+        else:
+            primer = self.hyp_primer
+
+            # NOTE (Y. Masuyama): This is a temporary option for computing states for SSMs
+            if self.scorers["lm"].__class__.__name__ in ["MambaLM", "Mamba2LM"]:
+                lm = self.scorers["lm"]
+                ys = torch.tensor([primer], device=x.device)
+
+                # NOTE (Y. Masuyama): The text token sequence is assumed to be shorter than the speech token sequence
+                inference_params = lm.batch_init_state(torch.cat([ys, ys], -1))
+
+                if self.scorers["lm"].prefix_bidir is None:
+                    # NOTE (Y. Masuyama): Running SSM to obtain the state at the generatetext token
+                    states = [inference_params]
+                    for n in range(len(primer)-1):
+                        _, states = lm.batch_score(
+                            ys[:, :n+1],
+                            states,
+                            xs=None
+                        )
+                    init_states["lm"] = states[0]
+
+                else:
+                    # NOTE (Y. Masuyama): Running SSM to obtain the state at the generatetext token
+                    lm(
+                        ys[:, :-1],
+                        hidden=None,
+                        inference_params=inference_params,
+                    )
+                    init_states["lm"] = inference_params
+
+                # NOTE (Y. Masuyama): Manually setting the offset
+                init_states["lm"].seqlen_offset = len(primer) - 1
+                init_scores["lm"] = 0.0
 
         return self.batchfy(
             [
@@ -279,6 +315,7 @@ class BatchBeamSearch(BeamSearch):
         weighted_scores = torch.zeros(
             n_batch, self.n_vocab, dtype=x.dtype, device=x.device
         )
+
         if self.return_hs:
             hs, scores, states = self.score_full(
                 running_hyps,

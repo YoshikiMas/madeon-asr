@@ -32,7 +32,7 @@ class FF(SequenceModule):
             d_inner,
             transposed=transposed,
             activation=activation,
-            initializer=initializer,
+            # initializer=initializer,
             activate=True,
         )
         dropout_cls = (
@@ -48,7 +48,7 @@ class FF(SequenceModule):
             self.d_output,
             transposed=transposed,
             activation=None,
-            initializer=initializer,
+            # initializer=initializer,
             activate=False,
         )
 

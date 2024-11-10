@@ -10,6 +10,7 @@ import math
 
 import torch
 from torch import nn
+from espnet.nets.pytorch_backend.transformer.embedding import T5RelativePositionBias
 
 
 class MultiHeadedAttention(nn.Module):
@@ -19,10 +20,17 @@ class MultiHeadedAttention(nn.Module):
         n_head (int): The number of heads.
         n_feat (int): The number of features.
         dropout_rate (float): Dropout rate.
+        causal (bool): Apply causal attention.
+        cross_attn (bool): Cross attention instead of self attention.
 
     """
 
-    def __init__(self, n_head, n_feat, dropout_rate):
+    def __init__(
+        self,
+        n_head,
+        n_feat,
+        dropout_rate,
+    ):
         """Construct an MultiHeadedAttention object."""
         super(MultiHeadedAttention, self).__init__()
         assert n_feat % n_head == 0
@@ -35,6 +43,7 @@ class MultiHeadedAttention(nn.Module):
         self.linear_out = nn.Linear(n_feat, n_feat)
         self.attn = None
         self.dropout = nn.Dropout(p=dropout_rate)
+        self.dropout_rate = dropout_rate
 
     def forward_qkv(self, query, key, value):
         """Transform query, key and value.
@@ -302,4 +311,41 @@ class RelPositionMultiHeadedAttention(MultiHeadedAttention):
             self.d_k
         )  # (batch, head, time1, time2)
 
+        return self.forward_attention(v, scores, mask)
+
+class T5MultiHeadedAttention(MultiHeadedAttention):
+    """Multi-Head Attention layer with T5's relative position bias.
+
+    Paper: https://arxiv.org/abs/1910.1p3461
+
+    Args:
+        n_head (int): The number of heads.
+        n_feat (int): The number of features.
+        dropout_rate (float): Dropout rate.
+        rope_fraction (float): Fraction of the RoPE to use.
+        zero_triu (bool): Whether to zero the upper triangular part of attention matrix.
+
+    """
+    def __init__(self, n_head, n_feat, dropout_rate,):
+        super().__init__(n_head, n_feat, dropout_rate,)
+        self.pos_emb = T5RelativePositionBias(n_feat, dropout_rate, n_heads=n_head)
+
+    def forward(self, query, key, value, mask):
+        """Compute scaled dot product attention.
+
+        Args:
+            query (torch.Tensor): Query tensor (#batch, time1, size).
+            key (torch.Tensor): Key tensor (#batch, time2, size).
+            value (torch.Tensor): Value tensor (#batch, time2, size).
+            pos_emb (torch.Tensor): Position bias (1, head, time1, time2).
+            mask (torch.Tensor): Mask tensor (#batch, 1, time2) or
+                (#batch, time1, time2).
+
+        Returns:
+            torch.Tensor: Output tensor (#batch, time1, d_model).
+
+        """
+        q, k, v = self.forward_qkv(query, key, value)
+        scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.d_k)
+        scores += self.pos_emb.compute_bias(query.size(1), key.size(1))
         return self.forward_attention(v, scores, mask)

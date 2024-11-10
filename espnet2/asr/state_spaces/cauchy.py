@@ -1,25 +1,22 @@
-# This code is derived from https://github.com/HazyResearch/state-spaces
+# This code is derived from https://github.com/state-spaces/s4
 
+from pathlib import Path
 import torch
-from cauchy_mult import (
-    cauchy_mult_bwd,
-    cauchy_mult_fwd,
-    cauchy_mult_sym_bwd,
-    cauchy_mult_sym_fwd,
-)
+
 from einops import rearrange
+
+from structured_kernels import cauchy_mult_sym_fwd, cauchy_mult_sym_bwd
 
 
 def cauchy_mult_torch(
     v: torch.Tensor, z: torch.Tensor, w: torch.Tensor, symmetric=True
 ) -> torch.Tensor:
-    """Compute Cauchy kernel.
-
+    """
     v: (B, N)
     z: (L)
     w: (B, N)
-    symmetric: whether to assume that v and w contain complex conjugate pairs, of the
-    form [v_half, v_half.conj()] and [w_half, w_half.conj()]
+    symmetric: whether to assume that v and w contain complex conjugate pairs, of the form
+    [v_half, v_half.conj()] and [w_half, w_half.conj()]
     """
     if not symmetric:
         return (
@@ -32,10 +29,7 @@ def cauchy_mult_torch(
         vv = rearrange(v[:, : N // 2], "b n -> b 1 n")
         zz = rearrange(z, "l -> l 1")
         ww = rearrange(w[:, : N // 2], "b n -> b 1 n")
-        return 2 * (
-            (zz * vv.real - vv.real * ww.real - vv.imag * ww.imag)
-            / (zz * zz - 2 * zz * ww.real + ww.abs().square())
-        ).sum(dim=-1)
+        return (vv / (zz - ww) + vv.conj() / (zz - ww.conj())).sum(dim=-1)
 
 
 def cauchy_mult_keops(v, z, w):
@@ -50,19 +44,14 @@ def cauchy_mult_keops(v, z, w):
     return s.squeeze(-1)
 
 
-def _cauchy_mult(v, z, w, symmetric=True):
-    if not symmetric:
-        return CauchyMultiply.apply(v, z, w)
-    else:
-        return CauchyMultiplySymmetric.apply(v, z, w)
+def _cauchy_mult(v, z, w):
+    return CauchyMultiplySymmetric.apply(v, z, w)
 
 
-def cauchy_mult(v, z, w, symmetric=True):
-    """Wrap the cuda method to deal with shapes."""
+def cauchy_mult(v, z, w):
+    """Wrap the cuda method to deal with shapes"""
     v, w = torch.broadcast_tensors(v, w)
     shape = v.shape
-    # z_shape = z.shape
-    z = z.squeeze()
     assert len(z.shape) == 1
 
     v = v.contiguous()
@@ -71,33 +60,9 @@ def cauchy_mult(v, z, w, symmetric=True):
 
     N = v.size(-1)
     assert w.size(-1) == N
-    y = _cauchy_mult(v.view(-1, N), z, w.view(-1, N), symmetric=symmetric)
+    y = _cauchy_mult(v.view(-1, N), z, w.view(-1, N))
     y = y.view(*shape[:-1], z.size(-1))
-    # y = z.new_zeros(*shape[:-1], z.size(-1))
     return y
-
-
-class CauchyMultiply(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, v, z, w):
-        batch, N = v.shape
-        # supported_N_values = [1 << log_n for log_n in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]]
-        supported_N_values = [1 << log_n for log_n in [6]]
-        L = z.shape[-1]
-        if N not in supported_N_values:
-            raise NotImplementedError(f"Only support N values in {supported_N_values}")
-        if L % 32 != 0:
-            raise NotImplementedError("Only support L values that are multiples of 32")
-        if not v.is_cuda and z.is_cuda and w.is_cuda:
-            raise NotImplementedError("Only support CUDA tensors")
-        ctx.save_for_backward(v, z, w)
-        return cauchy_mult_fwd(v, z, w)
-
-    @staticmethod
-    def backward(ctx, dout):
-        v, z, w = ctx.saved_tensors
-        dv, dw = cauchy_mult_bwd(v, z, w, dout)
-        return dv, None, dw
 
 
 class CauchyMultiplySymmetric(torch.autograd.Function):
@@ -106,13 +71,13 @@ class CauchyMultiplySymmetric(torch.autograd.Function):
         batch, N = v.shape
         supported_N_values = [1 << log_n for log_n in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]]
         L = z.shape[-1]
-        if N not in supported_N_values:
+        if not N in supported_N_values:
             raise NotImplementedError(f"Only support N values in {supported_N_values}")
         max_L_value = 32 * 1024 * 64 * 1024
         if L > max_L_value:
-            raise NotImplementedError("Only support L values <= {max_L_value}")
-        if not v.is_cuda and z.is_cuda and w.is_cuda:
-            raise NotImplementedError("Only support CUDA tensors")
+            raise NotImplementedError(f"Only support L values <= {max_L_value}")
+        if not (v.is_cuda and z.is_cuda and w.is_cuda):
+            raise NotImplementedError(f"Only support CUDA tensors")
         ctx.save_for_backward(v, z, w)
         return cauchy_mult_sym_fwd(v, z, w)
 
