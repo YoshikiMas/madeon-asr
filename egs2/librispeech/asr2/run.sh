@@ -46,6 +46,6 @@ tgt_case="ts"
     --train_set "${train_set}" \
     --valid_set "${train_dev}" \
     --test_sets "${test_sets}" \
-    --src_bpe_train_text "data/${train_set}/text.${src_case}.${src_lang}" \
-    --tgt_bpe_train_text "data/${train_set}/text.${tgt_case}.${tgt_lang}" \
-    --lm_train_text "data/${train_set}/text.${tgt_case}.${tgt_lang} data/local/other_text/text" "$@"
+    --src_bpe_train_text "dump/extracted/wavlm_large/layer21/${train_set}/text.${src_case}.${src_lang}" \
+    --tgt_bpe_train_text "dump/extracted/wavlm_large/layer21/${train_set}/text.${tgt_case}.${tgt_lang}" \
+    --lm_train_text "dump/extracted/wavlm_large/layer21/${train_set}/text.${tgt_case}.${tgt_lang}" "$@"
