@@ -1,3 +1,5 @@
+
+
 # Mamba-based Decoder-Only Approach with Bidirectional Speech Modeling for Speech Recognition
 
 This repository is for a Mamba-based decoder-only approach (MADEON) for speech recognition proposed in the following SLT 2024 paper:
@@ -21,7 +23,7 @@ We currently support a comparison between variants of MADEON on [LibriSpeech 100
 ## Environment setup
 Our implementation is built on top of [ESPnet](https://espnet.github.io/espnet/).
 You need to install ESPnet following [ESPnet installation](https://espnet.github.io/espnet/installation.html).
-Our Pytorch version is `2.2.0`, and you additionally need `triton==2.2.0` and `causal-conv1d==1.2.0.post2`.
+Our Pytorch version is `2.2.0`, and you additionally need to install `triton==2.2.0` and `causal-conv1d==1.2.0.post2` via pip.
 
 ## Training and Evaluation
 Our decoder-only approach in ASR task is implemented as [asr2d](egs2/librispeech_100/asr2d/) for LibriSpeech 100h, which relies on [asr2](https://espnet.github.io/espnet/recipe/asr2.html) and [lm1](https://espnet.github.io/espnet/recipe/lm1.html) in the official repository.
